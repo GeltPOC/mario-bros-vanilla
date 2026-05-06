@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Super Mario Bros - Vanilla JS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+    }
+    #gameContainer {
+      position: relative;
+    }
+    #gameCanvas {
+      display: block;
+      border: 3px solid #e94560;
+      border-radius: 4px;
+      box-shadow: 0 0 30px rgba(233,69,96,0.5), 0 0 60px rgba(233,69,96,0.2);
+    }
+    #info {
+      color: #aaa;
+      text-align: center;
+      margin-top: 8px;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+    <div id="info">Arrow Keys / WASD to move &nbsp;|&nbsp; Space / Up to jump &nbsp;|&nbsp; Enter to start</div>
+  </div>
+
+  <script>
+  'use strict';
+
+  // ─── Constants ───────────────────────────────────────────────────────────────
+  const CANVAS_W = 800;
+  const CANVAS_H = 500;
+  const GRAVITY  = 0.55;
+  const WORLD_W  = 3000;
+  const GROUND_H = 40;
+  const GROUND_Y = CANVAS_H - GROUND_H;
+
+  // ─── Utilities ───────────────────────────────────────────────────────────────
+  function aabb(a, b) {
+    return a.x < b.x + b.w &&
+           a.x + a.w > b.x &&
+           a.y < b.y + b.h &&
+           a.y + a.h > b.y;
+  }
+
+  // ─── Platform ────────────────────────────────────────────────────────────────
+  class Platform {
+    constructor(x, y, w, h, color = '#8B4513') {
+      this.x = x; this.y = y; this.w = w; this.h = h; this.color = color;
+    }
+    draw(ctx, camX) {
+      const sx = this.x - camX;
+      if (sx + this.w < 0 || sx > CANVAS_W) return;
+      // Platform body
+      ctx.fillStyle = this.color;
+      ctx.fillRect(sx, this.y, this.w, this.h);
+      // Top highlight
+      ctx.fillStyle = '#A0522D';
+      ctx.fillRect(sx, this.y, this.w, 6);
+      // Brick pattern
+      ctx.fillStyle = '#5C2E00';
+      const brickW = 32, brickH = 16;
+      for (let row = 0; row < Math.ceil(this.h / brickH); row++) {
+        const offsetX = (row % 2 === 0) ? 0 : brickW / 2;
+        for (let col = -1; col < Math.ceil(this.w / brickW) + 1; col++) {
+          const bx = sx + col * brickW + offsetX;
+          const by = this.y + row * brickH;
+          ctx.strokeStyle = '#5C2E00';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(bx, by, brickW, brickH);
+        }
+      }
+    }
+  }
+
+  // ─── QuestionBlock ───────────────────────────────────────────────────────────
+  class QuestionBlock {
+    constructor(x, y) {
+      this.x = x; this.y = y; this.w = 40; this.h = 40;
+      this.hit    = false;
+      this.bounce = 0;
+      this.coins  = 1;
+      this.animTimer = 0;
+    }
+    update(dt) {
+      this.animTimer += dt;
+      if (this.bounce > 0) {
+        this.bounce -= 2;
+        if (this.bounce < 0) this.bounce = 0;
+      }
+    }
+    draw(ctx, camX) {
+      const sx = this.x - camX;
+      if (sx + this.w < 0 || sx > CANVAS_W) return;
+      const drawY = this.y - this.bounce;
+
+      if (this.hit) {
+        ctx.fillStyle = '#888';
+        ctx.fillRect(sx, drawY, this.w, this.h);
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 2, drawY + 2, this.w - 4, this.h - 4);
+      } else {
+        // Animated yellow/orange
+        const pulse = Math.sin(this.animTimer * 5) * 10;
+        const r = Math.floor(200 + pulse);
+        ctx.fillStyle = `rgb(${r},170,0)`;
+        ctx.fillRect(sx, drawY, this.w, this.h);
+        // Border
+        ctx.strokeStyle = '#5C3000';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(sx + 1, drawY + 1, this.w - 2, this.h - 2);
+        // Inner border
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx + 5, drawY + 5, this.w - 10, this.h - 10);
+        // "?" symbol
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 22px Courier New';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('?', sx + this.w / 2, drawY + this.h / 2);
+      }
+    }
+    tryHit(mario) {
+      if (this.hit) return null;
+      // Mario hitting from below
+      const hitBox = { x: mario.x + 2, y: mario.y, w: mario.w - 4, h: mario.h };
+      const blockBox = { x: this.x, y: this.y, w: this.w, h: this.h };
+      if (aabb(hitBox, blockBox)) {
+        const mBottom = mario.y + mario.h;
+        const mTop    = mario.y;
+        if (mBottom > this.y && mTop < this.y && mario.vy < 0) {
+          this.hit = true;
+          this.bounce = 10;
+          return new Coin(this.x + this.w / 2 - 10, this.y - 50, true);
+        }
+      }
+      return null;
+    }
+  }
+
+  // ─── Coin ─────────────────────────────────────────────────────────────────────
+  class Coin {
+    constructor(x, y, fromBlock = false) {
+      this.x = x; this.y = y; this.w = 20; this.h = 20;
+      this.collected = false;
+      this.fromBlock = fromBlock;
+      this.vy = fromBlock ? -8 : 0;
+      this.life = fromBlock ? 60 : 9999;
+      this.animTimer = 0;
+    }
+    update() {
+      this.animTimer++;
+      if (this.fromBlock) {
+        this.vy += 0.4;
+        this.y += this.vy;
+        this.life--;
+        if (this.life <= 0) this.collected = true;
+      }
+    }
+    draw(ctx, camX) {
+      if (this.collected) return;
+      const sx = this.x - camX;
+      if (sx + this.w < 0 || sx > CANVAS_W) return;
+      // Spinning coin effect via width pulse
+      const pulse = Math.abs(Math.sin(this.animTimer * 0.15));
+      const cw = this.w * pulse;
+      const cx = sx + (this.w - cw) / 2;
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.ellipse(cx + cw / 2, this.y + this.h / 2, cw / 2, this.h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#B8860B';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // ─── Goomba ──────────────────────────────────────────────────────────────────
+  class Goomba {
+    constructor(x, y) {
+      this.x = x;
+      this.y = y;
+      this.w = 36;
+      this.h = 36;
+      this.vx = -1.2;
+      this.vy = 0;
+      this.dead = false;
+      this.squishTimer = 0;
+      this.onGround = false;
+      this.animTimer = 0;
+    }
+    update(platforms, groundY) {
+      if (this.dead) {
+        this.squishTimer++;
+        if (this.squishTimer > 40) this.dead = 'remove';
+        return;
+      }
+      this.animTimer++;
+      this.vy += GRAVITY;
+      this.x += this.vx;
+      this.y += this.vy;
+      this.onGround = false;
+
+      // Ground collision
+      if (this.y + this.h >= groundY) {
+        this.y = groundY - this.h;
+        this.vy = 0;
+        this.onGround = true;
+      }
+
+      // Platform collision
+      for (const p of platforms) {
+        if (aabb(this, p)) {
+          const overlapX = Math.min(this.x + this.w - p.x, p.x + p.w - this.x);
+          const overlapY = Math.min(this.y + this.h - p.y, p.y + p.h - this.y);
+          if (overlapY < overlapX) {
+            if (this.y + this.h - this.vy <= p.y + 2) {
+              this.y = p.y - this.h;
+              this.vy = 0;
+              this.onGround = true;
+            } else {
+              this.y = p.y + p.h;
+              this.vy = 0;
+            }
+          } else {
+            this.vx *= -1;
+          }
+        }
+      }
+
+      // World bounds bounce
+      if (this.x < 0) { this.x = 0; this.vx *= -1; }
+      if (this.x + this.w > WORLD_W) { this.x = WORLD_W - this.w; this.vx *= -1; }
+    }
+
+    draw(ctx, camX) {
+      if (this.dead === 'remove') return;
+      const sx = this.x - camX;
+      if (sx + this.w < -10 || sx > CANVAS_W + 10) return;
+
+      if (this.dead) {
+        // Squished
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(sx, this.y + this.h - 10, this.w, 10);
+        ctx.fillStyle = '#5C2E00';
+        ctx.fillRect(sx + 2, this.y + this.h - 8, this.w - 4, 6);
+        return;
+      }
+
+      const walkOff = (Math.floor(this.animTimer / 8) % 2 === 0) ? 3 : -3;
+
+      // Body (brown mushroom head)
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(sx + 2, this.y + 10, this.w - 4, this.h - 10);
+
+      // Head
+      ctx.fillStyle = '#8B4513';
+      ctx.beginPath();
+      ctx.arc(sx + this.w / 2, this.y + 14, 16, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes whites
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sx + 6, this.y + 8, 8, 7);
+      ctx.fillRect(sx + this.w - 14, this.y + 8, 8, 7);
+
+      // Pupils (angry)
+      ctx.fillStyle = '#000';
+      ctx.fillRect(sx + 9, this.y + 10, 4, 4);
+      ctx.fillRect(sx + this.w - 11, this.y + 10, 4, 4);
+
+      // Angry eyebrows
+      ctx.fillStyle = '#3B1A00';
+      ctx.fillRect(sx + 5, this.y + 6, 10, 3);
+      ctx.fillRect(sx + this.w - 15, this.y + 6, 10, 3);
+
+      // Feet
+      ctx.fillStyle = '#3B1A00';
+      ctx.fillRect(sx + 1 + walkOff, this.y + this.h - 6, 12, 6);
+      ctx.fillRect(sx + this.w - 13 - walkOff, this.y + this.h - 6, 12, 6);
+    }
+
+    squish() {
+      if (!this.dead) this.dead = true;
+    }
+  }
+
+  // ─── Mario ───────────────────────────────────────────────────────────────────
+  class Mario {
+    constructor(x, y) {
+      this.x = x; this.y = y;
+      this.w = 30; this.h = 46;
+      this.vx = 0; this.vy = 0;
+      this.onGround = false;
+      this.facingRight = true;
+      this.animTimer = 0;
+      this.invincible = 0;
+      this.jumpPressed = false;
+    }
+
+    update(keys, platforms, groundY) {
+      // Horizontal
+      const speed = 4.2;
+      let moving = false;
+      if (keys['ArrowLeft'] || keys['KeyA']) {
+        this.vx = -speed;
+        this.facingRight = false;
+        moving = true;
+      } else if (keys['ArrowRight'] || keys['KeyD']) {
+        this.vx = speed;
+        this.facingRight = true;
+        moving = true;
+      } else {
+        this.vx *= 0.75;
+      }
+      if (moving && this.onGround) this.animTimer++;
+
+      // Jump
+      const jumpKey = keys['ArrowUp'] || keys['Space'] || keys['KeyW'];
+      if (jumpKey && !this.jumpPressed && this.onGround) {
+        this.vy = -13;
+        this.onGround = false;
+      }
+      this.jumpPressed = !!jumpKey;
+
+      // Gravity
+      this.vy += GRAVITY;
+      this.x += this.vx;
+      this.y += this.vy;
+
+      this.onGround = false;
+
+      // Ground
+      if (this.y + this.h >= groundY) {
+        this.y = groundY - this.h;
+        this.vy = 0;
+        this.onGround = true;
+      }
+
+      // World bounds
+      if (this.x < 0) this.x = 0;
+      if (this.x + this.w > WORLD_W) this.x = WORLD_W - this.w;
+
+      // Platform collision
+      for (const p of platforms) {
+        if (aabb(this, p)) {
+          const overlapLeft  = this.x + this.w - p.x;
+          const overlapRight = p.x + p.w - this.x;
+          const overlapTop   = this.y + this.h - p.y;
+          const overlapBot   = p.y + p.h - this.y;
+          const minX = Math.min(overlapLeft, overlapRight);
+          const minY = Math.min(overlapTop,  overlapBot);
+          if (minY < minX) {
+            if (overlapTop < overlapBot) {
+              // Landing on top
+              this.y = p.y - this.h;
+              this.vy = 0;
+              this.onGround = true;
+            } else {
+              // Hitting from below
+              this.y = p.y + p.h;
+              this.vy = Math.abs(this.vy) * 0.3;
+            }
+          } else {
+            if (overlapLeft < overlapRight) {
+              this.x = p.x - this.w;
+            } else {
+              this.x = p.x + p.w;
+            }
+            this.vx = 0;
+          }
+        }
+      }
+
+      if (this.invincible > 0) this.invincible--;
+    }
+
+    draw(ctx, camX) {
+      const sx = Math.round(this.x - camX);
+      const sy = Math.round(this.y);
+
+      // Blink when invincible
+      if (this.invincible > 0 && Math.floor(this.invincible / 4) % 2 === 0) return;
+
+      const flip = !this.facingRight;
+      ctx.save();
+      if (flip) {
+        ctx.translate(sx + this.w, sy);
+        ctx.scale(-1, 1);
+        ctx.translate(-this.w, 0);
+      } else {
+        ctx.translate(sx, sy);
+      }
+
+      const walkFrame = Math.floor(this.animTimer / 5) % 3;
+
+      // ── HAT (red) ──
+      ctx.fillStyle = '#CC0000';
+      ctx.fillRect(4, 0, 22, 6);
+      ctx.fillRect(2, 6, 26, 4);
+
+      // ── FACE (skin) ──
+      ctx.fillStyle = '#F4A460';
+      ctx.fillRect(4, 10, 20, 12);
+
+      // Eyes
+      ctx.fillStyle = '#000';
+      ctx.fillRect(10, 12, 4, 4);
+
+      // Mustache
+      ctx.fillStyle = '#5C2E00';
+      ctx.fillRect(8, 19, 14, 4);
+
+      // ── OVERALLS (blue) ──
+      ctx.fillStyle = '#0044CC';
+      ctx.fillRect(4, 22, 22, 14);
+      // Buttons
+      ctx.fillStyle = '#FFD700';
+      ctx.fillRect(8, 24, 3, 3);
+      ctx.fillRect(18, 24, 3, 3);
+
+      // ── SHIRT (red) ──
+      ctx.fillStyle = '#CC0000';
+      ctx.fillRect(2, 36, 10, 6);
+      ctx.fillRect(18, 36, 10, 6);
+
+      // ── LEGS ──
+      ctx.fillStyle = '#0044CC';
+      if (!this.onGround && walkFrame === 0) {
+        // Jumping pose
+        ctx.fillRect(3, 36, 10, 6);
+        ctx.fillRect(17, 36, 10, 6);
+      } else {
+        const legOff = [0, 4, 0][walkFrame];
+        ctx.fillRect(3, 36, 10, 6);
+        ctx.fillRect(17, 36, 10, 6);
+      }
+
+      // ── SHOES (brown) ──
+      ctx.fillStyle = '#5C2E00';
+      if (this.onGround) {
+        const shoeOff = walkFrame === 1 ? 3 : 0;
+        ctx.fillRect(2 + shoeOff, 42, 12, 4);
+        ctx.fillRect(16 - shoeOff, 42, 12, 4);
+      } else {
+        ctx.fillRect(2, 42, 12, 4);
+        ctx.fillRect(16, 42, 12, 4);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ─── Particle (score popup) ─────────────────────────────────────────────────
+  class Particle {
+    constructor(x, y, text) {
+      this.x = x; this.y = y;
+      this.text = text;
+      this.life = 60;
+      this.vy = -1.5;
+    }
+    update() {
+      this.y += this.vy;
+      this.life--;
+    }
+    draw(ctx, camX) {
+      if (this.life <= 0) return;
+      const alpha = this.life / 60;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 16px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText(this.text, this.x - camX, this.y);
+      ctx.restore();
+    }
+  }
+
+  // ─── Game ────────────────────────────────────────────────────────────────────
+  class Game {
+    constructor(canvas) {
+      this.canvas  = canvas;
+      this.ctx     = canvas.getContext('2d');
+      this.keys    = {};
+      this.state   = 'start'; // 'start' | 'playing' | 'gameover' | 'win'
+      this.rafId   = null;
+      this.lastTime = 0;
+
+      this._bindInput();
+      this._initLevel();
+      this._loop(0);
+    }
+
+    _bindInput() {
+      window.addEventListener('keydown', e => {
+        this.keys[e.code] = true;
+        if (e.code === 'Space') e.preventDefault();
+        if (e.code === 'ArrowUp') e.preventDefault();
+        if (e.code === 'ArrowDown') e.preventDefault();
+        if (e.code === 'Enter') {
+          if (this.state === 'start' || this.state === 'gameover' || this.state === 'win') {
+            this._initLevel();
+            this.state = 'playing';
+          }
+        }
+      });
+      window.addEventListener('keyup', e => { this.keys[e.code] = false; });
+    }
+
+    _initLevel() {
+      this.score  = 0;
+      this.lives  = 3;
+      this.coins  = 0;
+      this.cameraX = 0;
+
+      this.mario = new Mario(80, GROUND_Y - 46);
+
+      // ── Platforms ──
+      this.platforms = [
+        // Floating platforms
+        new Platform(200,  350, 120, 20),
+        new Platform(400,  300, 100, 20),
+        new Platform(550,  250, 140, 20),
+        new Platform(750,  320, 100, 20),
+        new Platform(900,  280, 120, 20),
+        new Platform(1050, 350, 80,  20),
+        new Platform(1200, 260, 160, 20),
+        new Platform(1400, 310, 100, 20),
+        new Platform(1550, 200, 120, 20),
+        new Platform(1700, 330, 100, 20),
+        new Platform(1900, 270, 140, 20),
+        new Platform(2100, 300, 100, 20),
+        new Platform(2300, 240, 120, 20),
+        new Platform(2500, 310, 100, 20),
+        new Platform(2700, 260, 140, 20),
+        // Stair-like
+        new Platform(450,  420, 60,  20),
+        new Platform(520,  390, 60,  20),
+        new Platform(590,  360, 60,  20),
+        // Gap bridge area
+        new Platform(1300, 460, 50,  20),
+        new Platform(1370, 430, 50,  20),
+      ];
+
+      // ── Question Blocks ──
+      this.questionBlocks = [
+        new QuestionBlock(300,  330),
+        new QuestionBlock(340,  330),
+        new QuestionBlock(380,  330),
+        new QuestionBlock(620,  200),
+        new QuestionBlock(820,  280),
+        new QuestionBlock(1000, 240),
+        new QuestionBlock(1160, 220),
+        new QuestionBlock(1480, 270),
+        new QuestionBlock(1620, 160),
+        new QuestionBlock(1800, 230),
+        new QuestionBlock(2050, 260),
+        new QuestionBlock(2250, 200),
+        new QuestionBlock(2450, 270),
+        new QuestionBlock(2650, 220),
+        new QuestionBlock(2850, 250),
+      ];
+
+      // ── Goombas ──
+      this.goombas = [
+        new Goomba(300,  GROUND_Y - 36),
+        new Goomba(500,  GROUND_Y - 36),
+        new Goomba(700,  GROUND_Y - 36),
+        new Goomba(950,  GROUND_Y - 36),
+        new Goomba(1150, GROUND_Y - 36),
+        new Goomba(1350, GROUND_Y - 36),
+        new Goomba(1600, GROUND_Y - 36),
+        new Goomba(1800, GROUND_Y - 36),
+        new Goomba(2000, GROUND_Y - 36),
+        new Goomba(2200, GROUND_Y - 36),
+        new Goomba(2400, GROUND_Y - 36),
+        new Goomba(2600, GROUND_Y - 36),
+        new Goomba(2800, GROUND_Y - 36),
+        // On platforms
+        new Goomba(400,  280),
+        new Goomba(560,  230),
+        new Goomba(1210, 240),
+        new Goomba(1560, 180),
+        new Goomba(2310, 220),
+      ];
+
+      // ── Static Coins ──
+      this.coins_list = [];
+      const coinPositions = [
+        [250, 320], [260, 320], [270, 320],
+        [650, 220], [660, 220],
+        [850, 250], [860, 250],
+        [1100, 300], [1110, 300],
+        [1500, 240], [1510, 240],
+        [1700, 300], [1710, 300],
+        [1900, 240], [1910, 240],
+        [2100, 270], [2110, 270],
+        [2400, 280], [2410, 280],
+        [2700, 230], [2710, 230],
+        [2900, 260], [2910, 260],
+      ];
+      for (const [cx, cy] of coinPositions) {
+        this.coins_list.push(new Coin(cx, cy, false));
+      }
+
+      this.particles = [];
+      this.blockCoins = []; // coins ejected from blocks
+    }
+
+    _loop(timestamp) {
+      const dt = Math.min((timestamp - this.lastTime) / 16.67, 3);
+      this.lastTime = timestamp;
+
+      this._update(dt);
+      this._draw();
+
+      this.rafId = requestAnimationFrame(t => this._loop(t));
+    }
+
+    _update(dt) {
+      if (this.state !== 'playing') return;
+
+      const mario = this.mario;
+      const allPlatforms = this.platforms;
+
+      // Update question blocks
+      for (const qb of this.questionBlocks) {
+        qb.update(dt);
+        const coin = qb.tryHit(mario);
+        if (coin) {
+          this.blockCoins.push(coin);
+          this.score += 50;
+          this.coins++;
+          this.particles.push(new Particle(qb.x + qb.w / 2, qb.y - 10, '+50'));
+        }
+      }
+
+      // Update mario
+      mario.update(this.keys, allPlatforms, GROUND_Y);
+
+      // Mario fell into a pit
+      if (mario.y > CANVAS_H + 100) {
+        this._loseLife();
+        return;
+      }
+
+      // Camera
+      this.cameraX = mario.x - CANVAS_W / 3;
+      if (this.cameraX < 0) this.cameraX = 0;
+      if (this.cameraX > WORLD_W - CANVAS_W) this.cameraX = WORLD_W - CANVAS_W;
+
+      // Update goombas
+      for (const g of this.goombas) {
+        if (g.dead === 'remove') continue;
+        g.update(allPlatforms, GROUND_Y);
+
+        if (!g.dead && mario.invincible === 0) {
+          // Mario stomps goomba
+          if (aabb(mario, g)) {
+            const mBottom = mario.y + mario.h;
+            const gTop    = g.y;
+            if (mBottom - mario.vy <= gTop + 8 && mario.vy > 0) {
+              g.squish();
+              mario.vy = -8;
+              this.score += 100;
+              this.particles.push(new Particle(g.x + g.w / 2, g.y - 5, '+100'));
+            } else {
+              // Mario hit by goomba
+              mario.invincible = 120;
+              this.lives--;
+              if (this.lives <= 0) {
+                this.state = 'gameover';
+              }
+            }
+          }
+        }
+      }
+
+      // Static coins
+      for (const c of this.coins_list) {
+        if (!c.collected && aabb(mario, c)) {
+          c.collected = true;
+          this.score += 200;
+          this.coins++;
+          this.particles.push(new Particle(c.x + c.w / 2, c.y - 5, '+200'));
+        }
+        c.update();
+      }
+
+      // Block coins
+      for (const c of this.blockCoins) {
+        c.update();
+      }
+      this.blockCoins = this.blockCoins.filter(c => !c.collected);
+
+      // Particles
+      for (const p of this.particles) p.update();
+      this.particles = this.particles.filter(p => p.life > 0);
+
+      // Win condition
+      if (mario.x > WORLD_W - 100) {
+        this.state = 'win';
+      }
+    }
+
+    _draw() {
+      const ctx = this.ctx;
+      const camX = this.cameraX || 0;
+
+      // ── Background sky ──
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+      skyGrad.addColorStop(0,   '#1a78c2');
+      skyGrad.addColorStop(0.7, '#5bb8f5');
+      skyGrad.addColorStop(1,   '#88d0f5');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      // ── Clouds ──
+      this._drawClouds(ctx, camX);
+
+      // ── Ground ──
+      this._drawGround(ctx, camX);
+
+      // ── Platforms ──
+      for (const p of this.platforms) p.draw(ctx, camX);
+
+      // ── Question Blocks ──
+      for (const qb of this.questionBlocks) qb.draw(ctx, camX);
+
+      // ── Static Coins ──
+      for (const c of this.coins_list) c.draw(ctx, camX);
+
+      // ── Block Coins ──
+      for (const c of this.blockCoins) c.draw(ctx, camX);
+
+      // ── Goombas ──
+      for (const g of this.goombas) g.draw(ctx, camX);
+
+      // ── Particles ──
+      for (const p of this.particles) p.draw(ctx, camX);
+
+      // ── Mario ──
+      if (this.state === 'playing' || this.state === 'gameover') {
+        this.mario.draw(ctx, camX);
+      }
+
+      // ── Goal flag ──
+      this._drawGoal(ctx, camX);
+
+      // ── HUD ──
+      this._drawHUD(ctx);
+
+      // ── Overlays ──
+      if (this.state === 'start')    this._drawStart(ctx);
+      if (this.state === 'gameover') this._drawGameOver(ctx);
+      if (this.state === 'win')      this._drawWin(ctx);
+    }
+
+    _drawClouds(ctx, camX) {
+      const cloudPositions = [
+        [100, 60], [400, 40], [700, 80], [1000, 50], [1300, 70],
+        [1600, 45], [1900, 65], [2200, 55], [2500, 75], [2800, 40]
+      ];
+      for (const [cx, cy] of cloudPositions) {
+        const sx = cx - camX * 0.3; // Parallax
+        if (sx + 120 < 0 || sx > CANVAS_W) continue;
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath();
+        ctx.arc(sx,       cy + 20, 22, 0, Math.PI * 2);
+        ctx.arc(sx + 30,  cy,      28, 0, Math.PI * 2);
+        ctx.arc(sx + 65,  cy + 15, 24, 0, Math.PI * 2);
+        ctx.arc(sx + 90,  cy + 25, 18, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    _drawGround(ctx, camX) {
+      // Top grass strip
+      ctx.fillStyle = '#228B22';
+      ctx.fillRect(0, GROUND_Y, CANVAS_W, 8);
+      // Dirt
+      ctx.fillStyle = '#8B6914';
+      ctx.fillRect(0, GROUND_Y + 8, CANVAS_W, GROUND_H - 8);
+      // Brick lines
+      ctx.strokeStyle = '#6B4E0A';
+      ctx.lineWidth = 1;
+      const bw = 40;
+      const bh = 16;
+      for (let row = 0; row < 3; row++) {
+        const off = (row % 2 === 0) ? ((camX * 1) % bw) : ((camX * 1 + bw / 2) % bw);
+        for (let col = -1; col < CANVAS_W / bw + 2; col++) {
+          ctx.strokeRect(-off + col * bw, GROUND_Y + 8 + row * bh, bw, bh);
+        }
+      }
+    }
+
+    _drawGoal(ctx, camX) {
+      const fx = WORLD_W - 80;
+      const sx = fx - camX;
+      if (sx > CANVAS_W + 10 || sx < -20) return;
+      // Pole
+      ctx.fillStyle = '#888';
+      ctx.fillRect(sx + 10, GROUND_Y - 200, 6, 200);
+      // Flag
+      ctx.fillStyle = '#00CC00';
+      ctx.beginPath();
+      ctx.moveTo(sx + 16, GROUND_Y - 200);
+      ctx.lineTo(sx + 60, GROUND_Y - 175);
+      ctx.lineTo(sx + 16, GROUND_Y - 150);
+      ctx.fill();
+      // Castle
+      ctx.fillStyle = '#bbb';
+      ctx.fillRect(sx, GROUND_Y - 60, 70, 60);
+      ctx.fillStyle = '#999';
+      ctx.fillRect(sx,      GROUND_Y - 75, 18, 18);
+      ctx.fillRect(sx + 26, GROUND_Y - 75, 18, 18);
+      ctx.fillRect(sx + 52, GROUND_Y - 75, 18, 18);
+      ctx.fillStyle = '#555';
+      ctx.fillRect(sx + 24, GROUND_Y - 35, 22, 35);
+      ctx.fillStyle = '#777';
+      ctx.fillRect(sx + 10, GROUND_Y - 45, 16, 20);
+      ctx.fillRect(sx + 44, GROUND_Y - 45, 16, 20);
+    }
+
+    _drawHUD(ctx) {
+      // HUD background
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, CANVAS_W, 38);
+
+      ctx.font = 'bold 18px Courier New';
+      ctx.textBaseline = 'middle';
+
+      // SCORE
+      ctx.fillStyle = '#FFD700';
+      ctx.textAlign = 'left';
+      ctx.fillText('SCORE', 16, 13);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(String(this.score).padStart(7, '0'), 16, 30);
+
+      // COINS
+      ctx.fillStyle = '#FFD700';
+      ctx.textAlign = 'center';
+      ctx.fillText('× ' + String(this.coins).padStart(2, '0'), CANVAS_W / 2, 19);
+      // Coin icon
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.arc(CANVAS_W / 2 - 32, 19, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#B8860B';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // LIVES
+      ctx.fillStyle = '#FF4444';
+      ctx.textAlign = 'right';
+      ctx.fillText('♥ × ' + this.lives, CANVAS_W - 16, 19);
+
+      // World progress bar
+      const prog = this.mario.x / WORLD_W;
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(0, 36, CANVAS_W, 4);
+      ctx.fillStyle = '#00FF88';
+      ctx.fillRect(0, 36, CANVAS_W * prog, 4);
+    }
+
+    _drawStart(ctx) {
+      ctx.fillStyle = 'rgba(0,0,0,0.78)';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Title shadow
+      ctx.fillStyle = '#CC0000';
+      ctx.font = 'bold 58px Courier New';
+      ctx.fillText('SUPER MARIO BROS', CANVAS_W / 2 + 3, CANVAS_H / 2 - 97);
+      ctx.fillStyle = '#FF4444';
+      ctx.fillText('SUPER MARIO BROS', CANVAS_W / 2, CANVAS_H / 2 - 100);
+
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 22px Courier New';
+      ctx.fillText('Vanilla JS Edition', CANVAS_W / 2, CANVAS_H / 2 - 55);
+
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px Courier New';
+      ctx.fillText('Arrow Keys / WASD  →  Move', CANVAS_W / 2, CANVAS_H / 2);
+      ctx.fillText('Space / Up / W     →  Jump', CANVAS_W / 2, CANVAS_H / 2 + 28);
+      ctx.fillText('Stomp enemies to defeat them!', CANVAS_W / 2, CANVAS_H / 2 + 56);
+      ctx.fillText('Hit ? blocks from below for coins!', CANVAS_W / 2, CANVAS_H / 2 + 84);
+      ctx.fillText('Reach the castle to win!', CANVAS_W / 2, CANVAS_H / 2 + 112);
+
+      const blink = Math.floor(Date.now() / 500) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = '#00FF88';
+        ctx.font = 'bold 20px Courier New';
+        ctx.fillText('Press ENTER to Start', CANVAS_W / 2, CANVAS_H / 2 + 155);
+      }
+    }
+
+    _drawGameOver(ctx) {
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#FF2222';
+      ctx.font = 'bold 64px Courier New';
+      ctx.fillText('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 60);
+
+      ctx.fillStyle = '#FFD700';
+      ctx.font = '24px Courier New';
+      ctx.fillText('Score: ' + this.score, CANVAS_W / 2, CANVAS_H / 2);
+      ctx.fillText('Coins: ' + this.coins, CANVAS_W / 2, CANVAS_H / 2 + 35);
+
+      const blink = Math.floor(Date.now() / 600) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px Courier New';
+        ctx.fillText('Press ENTER to try again', CANVAS_W / 2, CANVAS_H / 2 + 90);
+      }
+    }
+
+    _drawWin(ctx) {
+      ctx.fillStyle = 'rgba(0,0,50,0.85)';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 54px Courier New';
+      ctx.fillText('YOU WIN!', CANVAS_W / 2, CANVAS_H / 2 - 80);
+
+      ctx.fillStyle = '#00FF88';
+      ctx.font = '26px Courier New';
+      ctx.fillText('Congratulations!', CANVAS_W / 2, CANVAS_H / 2 - 30);
+
+      ctx.fillStyle = '#fff';
+      ctx.font = '22px Courier New';
+      ctx.fillText('Final Score: ' + this.score, CANVAS_W / 2, CANVAS_H / 2 + 15);
+      ctx.fillText('Coins: ' + this.coins, CANVAS_W / 2, CANVAS_H / 2 + 48);
+
+      const blink = Math.floor(Date.now() / 600) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 20px Courier New';
+        ctx.fillText('Press ENTER to play again', CANVAS_W / 2, CANVAS_H / 2 + 100);
+      }
+    }
+
+    _loseLife() {
+      this.lives--;
+      if (this.lives <= 0) {
+        this.state = 'gameover';
+      } else {
+        // Respawn mario
+        this.mario = new Mario(80, GROUND_Y - 46);
+        this.cameraX = 0;
+      }
+    }
+  }
+
+  // ─── Boot ────────────────────────────────────────────────────────────────────
+  window.addEventListener('load', () => {
+    const canvas = document.getElementById('gameCanvas');
+    new Game(canvas);
+  });
+  </script>
+</body>
+</html>
