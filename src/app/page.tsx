@@ -11,7 +11,7 @@ export default function Home() {
           letterSpacing: '0.2em',
         }}
       >
-        HOLA CHICOS
+        HOLA IVAN
       </h1>
       <iframe
         src="/mario.html"
