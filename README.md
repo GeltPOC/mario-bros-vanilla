@@ -1,33 +1,32 @@
 # mario-bros-vanilla
 
-A Next.js project.
+Proyecto Next.js generado con Gelt Code.
 
-## Getting Started
+## Requisitos
 
-Install dependencies:
+- Node.js 18+
+- npm
+
+## Instalación
 
 ```bash
 npm install
 ```
 
-Run the development server:
+## Desarrollo
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-## Production
-
-Build and start:
+## Producción
 
 ```bash
 npm run build
 npm start
 ```
 
-Or using PM2:
+## PM2
 
 ```bash
 pm2 start ecosystem.config.js
