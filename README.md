@@ -1,8 +1,6 @@
 # mario-bros-vanilla
 
-## Requisitos
-- Node.js 18+
-- npm
+Proyecto Next.js generado con Gelt Code.
 
 ## Instalación
 
