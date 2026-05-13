@@ -1,9 +1,6 @@
-# Mario Bros Vanilla
-
-Juego de Mario Bros con Next.js.
+# mario-bros-vanilla
 
 ## Requisitos
-
 - Node.js 18+
 - npm
 
@@ -26,9 +23,8 @@ npm run build
 npm start
 ```
 
-## Con PM2
+## PM2
 
 ```bash
-npm run build
 pm2 start ecosystem.config.js
 ```
