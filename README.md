@@ -1,11 +1,9 @@
-# mario-bros-vanilla
+# Gabriel Bros
 
-Proyecto Next.js generado con Gelt Code.
+Juego Mario Bros Vanilla con Next.js.
 
-## Requisitos
-
-- Node.js 18+
-- npm
+## Cambios
+- Título del juego actualizado a **"Gabriel Bros"**
 
 ## Instalación
 
@@ -26,8 +24,4 @@ npm run build
 npm start
 ```
 
-## PM2
-
-```bash
-pm2 start ecosystem.config.js
-```
+El proyecto se sirve en: `https://gelt-code.com/mario-bros-vanilla`

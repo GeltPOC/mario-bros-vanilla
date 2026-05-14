@@ -1,5 +1,7 @@
-import type { NextConfig } from 'next';
+import type { NextConfig } from 'next'
 
-const config: NextConfig = {};
+const config: NextConfig = {
+  basePath: '/mario-bros-vanilla'
+}
 
-export default config;
+export default config

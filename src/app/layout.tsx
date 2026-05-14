@@ -1,19 +1,19 @@
-import type { Metadata } from 'next';
-import './globals.css';
+import type { Metadata } from 'next'
+import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'mario-bros-vanilla',
-  description: 'mario-bros-vanilla app',
-};
+  title: 'Gabriel Bros',
+  description: 'Gabriel Bros - Un juego de plataformas'
+}
 
 export default function RootLayout({
-  children,
+  children
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>{children}</body>
     </html>
-  );
+  )
 }
